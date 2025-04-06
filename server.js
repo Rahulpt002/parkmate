@@ -233,7 +233,17 @@ app.get('/spots', checkApiKey, async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
   res.json({ spots });
 });
-
+app.post('/spots', checkApiKey, async (req, res) => {
+    const { location } = req.body;
+    if (!location) return res.status(400).json({ error: 'Location is required' });
+  
+    const { data, error } = await supabase
+      .from('parking_spots')
+      .insert([{ location, status: 'available' }])
+      .select();
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(201).json({ message: 'Spot added', spot: data[0] });
+  });
 app.get('/vehicles', checkApiKey, async (req, res) => {
   const { data: vehicles, error } = await supabase
     .from('vehicles')
