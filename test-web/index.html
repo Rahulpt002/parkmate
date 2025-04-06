@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ParkMate API Tester</title>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    section { margin-bottom: 20px; }
+    input, button { margin: 5px; padding: 5px; }
+    pre { background: #f0f0f0; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h1>ParkMate API Tester</h1>
+
+  <!-- Register Section -->
+  <section>
+    <h2>Register</h2>
+    <input id="reg-email" type="email" placeholder="Email" required>
+    <input id="reg-password" type="password" placeholder="Password" required>
+    <input id="reg-name" type="text" placeholder="Name">
+    <input id="reg-phone" type="text" placeholder="Phone">
+    <input id="reg-role" type="text" placeholder="Role (user/admin/employee)" value="user">
+    <button onclick="register()">Register</button>
+    <pre id="reg-response"></pre>
+  </section>
+
+  <!-- Login Section -->
+  <section>
+    <h2>Login</h2>
+    <input id="login-email" type="email" placeholder="Email" required>
+    <input id="login-password" type="password" placeholder="Password" required>
+    <button onclick="login()">Login</button>
+    <pre id="login-response"></pre>
+  </section>
+
+  <!-- Entry Section -->
+  <section>
+    <h2>Vehicle Entry</h2>
+    <input id="entry-image" type="text" placeholder="Image URL" required>
+    <input id="entry-userid" type="text" placeholder="User ID (optional)">
+    <button onclick="entry()">Submit Entry</button>
+    <pre id="entry-response"></pre>
+  </section>
+
+  <!-- Register Vehicle Section -->
+  <section>
+    <h2>Register Vehicle</h2>
+    <input id="reg-veh-userid" type="text" placeholder="User ID" required>
+    <input id="reg-veh-plate" type="text" placeholder="Number Plate" required>
+    <button onclick="registerVehicle()">Register Vehicle</button>
+    <pre id="reg-veh-response"></pre>
+  </section>
+
+  <!-- My Parkings Section -->
+  <section>
+    <h2>My Parkings</h2>
+    <input id="my-parkings-userid" type="text" placeholder="User ID" required>
+    <button onclick="getMyParkings()">Get Parkings</button>
+    <pre id="my-parkings-response"></pre>
+  </section>
+
+  <!-- Exit Vehicle Section -->
+  <section>
+    <h2>Exit Vehicle</h2>
+    <input id="exit-veh-plate" type="text" placeholder="Number Plate" required>
+    <button onclick="exitVehicle()">Exit Vehicle</button>
+    <pre id="exit-veh-response"></pre>
+  </section>
+
+  <script>
+    const BASE_URL = 'http://localhost:3000';
+    const RAZORPAY_KEY_ID = 'rzp_test_vTQIPJf5DxeDP9'; // Replace with your Razorpay test key
+
+    async function register() {
+      const email = document.getElementById('reg-email').value;
+      const password = document.getElementById('reg-password').value;
+      const name = document.getElementById('reg-name').value;
+      const phone = document.getElementById('reg-phone').value;
+      const role = document.getElementById('reg-role').value;
+
+      try {
+        const response = await fetch(`${BASE_URL}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, name, phone, role }),
+        });
+        const data = await response.json();
+        document.getElementById('reg-response').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('reg-response').textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function login() {
+      const email = document.getElementById('login-email').value;
+      const password = document.getElementById('login-password').value;
+
+      try {
+        const response = await fetch(`${BASE_URL}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await response.json();
+        document.getElementById('login-response').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('login-response').textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function entry() {
+      const imageUrl = document.getElementById('entry-image').value;
+      const userId = document.getElementById('entry-userid').value || ''; // Optional
+
+      try {
+        const response = await fetch(`${BASE_URL}/entry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageUrl, userId }),
+        });
+        const data = await response.json();
+        document.getElementById('entry-response').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('entry-response').textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function registerVehicle() {
+      const userId = document.getElementById('reg-veh-userid').value;
+      const numberPlate = document.getElementById('reg-veh-plate').value;
+      try {
+        const response = await fetch(`${BASE_URL}/register-vehicle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, numberPlate }),
+        });
+        const data = await response.json();
+        document.getElementById('reg-veh-response').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('reg-veh-response').textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function getMyParkings() {
+      const userId = document.getElementById('my-parkings-userid').value;
+      try {
+        const response = await fetch(`${BASE_URL}/my-parkings?userId=${userId}`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        document.getElementById('my-parkings-response').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('my-parkings-response').textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function exitVehicle() {
+      const numberPlate = document.getElementById('exit-veh-plate').value; // Fixed ID
+      try {
+        const response = await fetch(`${BASE_URL}/exit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ numberPlate }),
+        });
+        const data = await response.json();
+        document.getElementById('exit-veh-response').textContent = JSON.stringify(data, null, 2);
+
+        if (data.payment && window.Razorpay) {
+          const options = {
+            key: RAZORPAY_KEY_ID,
+            amount: data.payment.amount * 100, // In paise
+            currency: data.payment.currency,
+            order_id: data.payment.orderId,
+            handler: function (response) {
+              alert('Payment successful: ' + response.razorpay_payment_id);
+              // Optionally send payment confirmation to backend
+            },
+            prefill: {
+              email: 'user@example.com',
+              contact: '1234567890',
+            },
+            theme: {
+              color: '#3399cc',
+            },
+          };
+          const rzp = new window.Razorpay(options);
+          rzp.on('payment.failed', function (response) {
+            alert('Payment failed: ' + response.error.description);
+          });
+          rzp.open();
+        } else if (!window.Razorpay) {
+          document.getElementById('exit-veh-response').textContent += '\nError: Razorpay SDK not loaded';
+        }
+      } catch (error) {
+        document.getElementById('exit-veh-response').textContent = `Error: ${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html>
