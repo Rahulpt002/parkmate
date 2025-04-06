@@ -17,6 +17,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
+app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:8080', 'https://parkmate-su3h.onrender.com'] }));
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const razorpay = new Razorpay({
@@ -345,6 +346,6 @@ app.get('/spots', async (req, res) => {
   
     res.json({ users: usersWithVehicles });
   });
-  
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
