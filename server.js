@@ -4,7 +4,6 @@ const Tesseract = require('tesseract.js');
 const Razorpay = require('razorpay');
 const cors = require('cors');
 const axios = require('axios');
-const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
@@ -17,29 +16,20 @@ const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
-const JWT_SECRET = process.env.JWT_SECRET || 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2';
+const API_KEY = process.env.API_KEY || 'parkmate-admin-12345'; // Simple static key
 
-const authenticateAdmin = async (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const { data: user } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', decoded.userId)
-      .single();
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Not an admin' });
-    req.user = decoded;
-    next();
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid token' });
+// Middleware to check API key
+const checkApiKey = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  if (!apiKey || apiKey !== API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized - Invalid or missing API key' });
   }
+  next();
 };
 
 app.get('/', (req, res) => res.send('ParkMate Backend'));
 
+// Registration
 app.post('/register', async (req, res) => {
   const { email, password, name, phone, role = 'user' } = req.body;
   console.log('Register request:', { email, name, phone, role });
@@ -53,17 +43,17 @@ app.post('/register', async (req, res) => {
   res.status(201).json({ message: 'User registered', user: data.user });
 });
 
+// Login (No token, just user data)
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
   console.log('Login request:', { email });
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return res.status(400).json({ error: error.message });
-
-  const token = jwt.sign({ userId: data.user.id }, JWT_SECRET, { expiresIn: '1h' });
-  res.json({ token, user: data.user });
+  res.json({ user: data.user });
 });
 
+// Vehicle Entry
 app.post('/entry', async (req, res) => {
   const { imageUrl, userId, numberPlate, spotId } = req.body;
   console.log('Entry request:', { imageUrl, userId, numberPlate, spotId });
@@ -113,6 +103,7 @@ app.post('/entry', async (req, res) => {
   res.json({ message: 'Vehicle entered', numberPlate: finalNumberPlate, spotId: spot.id });
 });
 
+// Vehicle Registration
 app.post('/register-vehicle', async (req, res) => {
   const { userId, numberPlate } = req.body;
   console.log('Register vehicle request:', { userId, numberPlate });
@@ -134,6 +125,7 @@ app.post('/register-vehicle', async (req, res) => {
   res.status(201).json({ message: 'Vehicle registered' });
 });
 
+// Parking Spot Finder
 app.get('/my-parkings', async (req, res) => {
   const { userId } = req.query;
   console.log('My parkings request:', { userId });
@@ -173,6 +165,7 @@ app.get('/my-parkings', async (req, res) => {
   res.json({ parkings: formattedParkings });
 });
 
+// Vehicle Exit
 app.post('/exit', async (req, res) => {
   const { numberPlate } = req.body;
   console.log('Exit request:', { numberPlate });
@@ -234,13 +227,14 @@ app.post('/exit', async (req, res) => {
   }
 });
 
-app.get('/spots', authenticateAdmin, async (req, res) => {
+// Admin Endpoints with API Key
+app.get('/spots', checkApiKey, async (req, res) => {
   const { data: spots, error } = await supabase.from('parking_spots').select('*');
   if (error) return res.status(400).json({ error: error.message });
   res.json({ spots });
 });
 
-app.get('/vehicles', authenticateAdmin, async (req, res) => {
+app.get('/vehicles', checkApiKey, async (req, res) => {
   const { data: vehicles, error } = await supabase
     .from('vehicles')
     .select('number_plate, entry_time, spot_id')
@@ -249,7 +243,7 @@ app.get('/vehicles', authenticateAdmin, async (req, res) => {
   res.json({ vehicles });
 });
 
-app.get('/users', authenticateAdmin, async (req, res) => {
+app.get('/users', checkApiKey, async (req, res) => {
   const { data: users, error: userError } = await supabase
     .from('users')
     .select('id, email, name');
