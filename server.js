@@ -3,55 +3,62 @@ const { createClient } = require('@supabase/supabase-js');
 const Tesseract = require('tesseract.js');
 const Razorpay = require('razorpay');
 const cors = require('cors');
-const axios = require('axios'); // Added for image download
-const fs = require('fs'); // Added for file handling
+const axios = require('axios');
+const fs = require('fs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
 
-const corsOptions = {
-  origin: 'http://localhost:8080',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
-};
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:8080', 'https://parkmate-admin.vercel.app'] }));
 app.use(express.json());
-app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:8080', 'https://parkmate-su3h.onrender.com'] }));
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 app.get('/', (req, res) => res.send('ParkMate Backend'));
 
+// Middleware to verify JWT
+const authenticateAdmin = async (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', decoded.userId)
+      .single();
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Not an admin' });
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
 // Registration
 app.post('/register', async (req, res) => {
-    const { email, password, name, phone, role } = req.body;
-    console.log('Register request:', { email, name, phone, role });
-  
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) {
-      console.log('Auth signup error:', error);
-      return res.status(400).json({ error: error.message });
-    }
-    console.log('Auth user created:', data.user.id);
-  
-    const { data: insertedUser, error: insertError } = await supabase
-      .from('users')
-      .insert([{ id: data.user.id, email, name, phone, role: role || 'user' }])
-      .select()
-      .single();
-    if (insertError) {
-      console.log('Users table insert error:', insertError);
-      return res.status(400).json({ error: insertError.message });
-    }
-    console.log('User inserted into users table:', insertedUser.id);
-  
-    res.status(201).json({ message: 'User registered', user: data.user });
+  const { email, password, name, phone, role = 'user' } = req.body;
+  console.log('Register request:', { email, name, phone, role });
+
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { name, phone, role } },
   });
+  if (error) {
+    console.log('Auth signup error:', error);
+    return res.status(400).json({ error: error.message });
+  }
+
+  res.status(201).json({ message: 'User registered', user: data.user });
+});
 
 // Login
 app.post('/login', async (req, res) => {
@@ -63,90 +70,60 @@ app.post('/login', async (req, res) => {
     console.log('Login error:', error);
     return res.status(400).json({ error: error.message });
   }
-  res.json({ token: data.session.access_token, user: data.user });
+
+  const token = jwt.sign({ userId: data.user.id }, JWT_SECRET, { expiresIn: '1h' });
+  res.json({ token, user: data.user });
 });
 
 // Vehicle Entry
 app.post('/entry', async (req, res) => {
-    const { imageUrl, userId } = req.body;
-    console.log('Entry request:', { imageUrl, userId });
-  
-    if (!imageUrl) {
-      return res.status(400).json({ error: 'imageUrl is required' });
-    }
-  
-    let tempFile = 'temp.jpg';
-    try {
-      console.log('Downloading image from:', imageUrl);
-      const response = await axios({
-        url: imageUrl,
-        method: 'GET',
-        responseType: 'stream',
-      }).catch((err) => {
-        throw new Error('Failed to download image: ' + err.message);
-      });
-  
-      const writer = fs.createWriteStream(tempFile);
-      response.data.pipe(writer);
-  
-      await new Promise((resolve, reject) => {
-        writer.on('finish', resolve);
-        writer.on('error', reject);
-      });
-  
-      console.log('Attempting to recognize image:', tempFile);
-      const { data } = await Tesseract.recognize(tempFile, 'eng', {
-        logger: (m) => console.log(m),
-      });
-      const numberPlate = data.text.trim().replace(/^["“']+|["“']+$/g, ''); // Remove leading/trailing quotes
-      console.log('Recognized number plate:', numberPlate);
-  
-      const { data: spot, error: spotError } = await supabase
-        .from('parking_spots')
-        .select('*')
-        .eq('status', 'available')
-        .limit(1)
-        .single();
-      if (spotError || !spot) {
-        console.log('Spot error:', spotError);
-        return res.status(400).json({ error: 'No available spots' });
-      }
-  
-      const vehicleData = {
-        number_plate: numberPlate,
-        image_url: imageUrl,
-        entry_time: new Date(),
-        spot_id: spot.id,
-      };
-      if (userId) vehicleData.user_id = userId;
-  
-      const { error } = await supabase.from('vehicles').insert([vehicleData]);
-      if (error) {
-        console.log('Insert error:', error);
-        return res.status(400).json({ error: error.message });
-      }
-  
-      const { data: updatedSpot, error: updateError } = await supabase
-        .from('parking_spots')
-        .update({ status: 'occupied' })
-        .eq('id', spot.id)
-        .select()
-        .single();
-      if (updateError) {
-        console.log('Update error:', updateError);
-        return res.status(500).json({ error: updateError.message });
-      }
-  
-      res.json({ numberPlate, spot: updatedSpot });
-    } catch (err) {
-      console.error('Tesseract or processing error:', err.message);
-      res.status(500).json({ error: 'Failed to process image: ' + err.message });
-    } finally {
-      if (fs.existsSync(tempFile)) {
-        fs.unlinkSync(tempFile);
-      }
-    }
-  });
+  const { imageUrl, userId, numberPlate, spotId } = req.body;
+  console.log('Entry request:', { imageUrl, userId, numberPlate, spotId });
+
+  let finalNumberPlate = numberPlate;
+  if (!finalNumberPlate && imageUrl) {
+    const { data } = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    const { data: { text } } = await Tesseract.recognize(Buffer.from(data), 'eng');
+    finalNumberPlate = text.trim().replace(/^["“']+|["“']+$/g, '');
+  }
+
+  if (!finalNumberPlate) return res.status(400).json({ error: 'Number plate required' });
+
+  const { data: spot, error: spotError } = await supabase
+    .from('parking_spots')
+    .select('id, status')
+    .eq('id', spotId || null)
+    .eq('status', 'available')
+    .single();
+  if (spotError || !spot) {
+    const { data: availableSpot, error: availableError } = await supabase
+      .from('parking_spots')
+      .select('*')
+      .eq('status', 'available')
+      .limit(1)
+      .single();
+    if (availableError || !availableSpot) return res.status(400).json({ error: 'No available spot' });
+    spot = availableSpot;
+  }
+
+  const vehicleData = {
+    number_plate: finalNumberPlate,
+    entry_time: new Date(),
+    spot_id: spot.id,
+    user_id: userId || null,
+  };
+  if (imageUrl) vehicleData.image_url = imageUrl;
+
+  const { error } = await supabase.from('vehicles').insert([vehicleData]);
+  if (error) return res.status(400).json({ error: error.message });
+
+  await supabase
+    .from('parking_spots')
+    .update({ status: 'occupied' })
+    .eq('id', spot.id);
+
+  res.json({ message: 'Vehicle entered', numberPlate: finalNumberPlate, spotId: spot.id });
+});
 
 // Vehicle Registration
 app.post('/register-vehicle', async (req, res) => {
@@ -165,7 +142,6 @@ app.post('/register-vehicle', async (req, res) => {
     return res.status(400).json({ error: error.message });
   }
 
-  // Update existing vehicle entries
   await supabase
     .from('vehicles')
     .update({ user_id: userId })
@@ -176,57 +152,56 @@ app.post('/register-vehicle', async (req, res) => {
 
 // Parking Spot Finder
 app.get('/my-parkings', async (req, res) => {
-    const { userId } = req.query;
-    console.log('My parkings request:', { userId });
-  
-    if (!userId) {
-      return res.status(400).json({ error: 'userId is required' });
-    }
-  
-    const { data: userVehicles, error: uvError } = await supabase
-      .from('user_vehicles')
-      .select('number_plate')
-      .eq('user_id', userId);
-    if (uvError) {
-      console.log('User vehicles error:', uvError);
-      return res.status(400).json({ error: uvError.message });
-    }
-  
-    const numberPlates = userVehicles.map((uv) => uv.number_plate);
-    if (!numberPlates.length) {
-      return res.json({ parkings: [] });
-    }
-  
-    const { data: parkings, error } = await supabase
-      .from('vehicles')
-      .select(`
-        number_plate,
-        entry_time,
-        spot_id,
-        parking_spots (
-          id,
-          location
-        )
-      `)
-      .in('number_plate', numberPlates);
-    if (error) {
-      console.log('Parkings error:', error);
-      return res.status(400).json({ error: error.message });
-    }
-  
-    const formattedParkings = parkings.map((parking) => ({
-      number_plate: parking.number_plate,
-      entry_time: parking.entry_time,
-      spot_id: parking.spot_id,
-      location: parking.parking_spots?.location || 'Unknown',
-    }));
-  
-    res.json({ parkings: formattedParkings });
-  });
+  const { userId } = req.query;
+  console.log('My parkings request:', { userId });
 
-  //vehicle exit
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
 
-  app.post('/exit', async (req, res) => {
+  const { data: userVehicles, error: uvError } = await supabase
+    .from('user_vehicles')
+    .select('number_plate')
+    .eq('user_id', userId);
+  if (uvError) {
+    console.log('User vehicles error:', uvError);
+    return res.status(400).json({ error: uvError.message });
+  }
+
+  const numberPlates = userVehicles.map((uv) => uv.number_plate);
+  if (!numberPlates.length) {
+    return res.json({ parkings: [] });
+  }
+
+  const { data: parkings, error } = await supabase
+    .from('vehicles')
+    .select(`
+      number_plate,
+      entry_time,
+      spot_id,
+      parking_spots (
+        id,
+        location
+      )
+    `)
+    .in('number_plate', numberPlates);
+  if (error) {
+    console.log('Parkings error:', error);
+    return res.status(400).json({ error: error.message });
+  }
+
+  const formattedParkings = parkings.map((parking) => ({
+    number_plate: parking.number_plate,
+    entry_time: parking.entry_time,
+    spot_id: parking.spot_id,
+    location: parking.parking_spots?.location || 'Unknown',
+  }));
+
+  res.json({ parkings: formattedParkings });
+});
+
+// Vehicle Exit
+app.post('/exit', async (req, res) => {
   const { numberPlate } = req.body;
   console.log('Exit request:', { numberPlate });
 
@@ -296,56 +271,52 @@ app.get('/my-parkings', async (req, res) => {
   }
 });
 
-// Get all parking spots
-app.get('/spots', async (req, res) => {
-    const { data: spots, error } = await supabase.from('parking_spots').select('*');
-    if (error) {
-      console.log('Spots error:', error);
-      return res.status(400).json({ error: error.message });
-    }
-    res.json({ spots });
-  });
-  
-  // Get all current vehicles (not exited)
-  app.get('/vehicles', async (req, res) => {
-    const { data: vehicles, error } = await supabase
-      .from('vehicles')
-      .select('number_plate, entry_time, spot_id')
-      .is('exit_time', null);
-    if (error) {
-      console.log('Vehicles error:', error);
-      return res.status(400).json({ error: error.message });
-    }
-    res.json({ vehicles });
-  });
-  
-  // Get all users with their vehicles
-  app.get('/users', async (req, res) => {
-    const { data: users, error: userError } = await supabase
-      .from('users')
-      .select('id, email, name');
-    if (userError) {
-      console.log('Users error:', userError);
-      return res.status(400).json({ error: userError.message });
-    }
-  
-    const { data: userVehicles, error: uvError } = await supabase
-      .from('user_vehicles')
-      .select('user_id, number_plate');
-    if (uvError) {
-      console.log('User vehicles error:', uvError);
-      return res.status(400).json({ error: uvError.message });
-    }
-  
-    const usersWithVehicles = users.map(user => ({
-      ...user,
-      vehicles: userVehicles
-        .filter(uv => uv.user_id === user.id)
-        .map(uv => uv.number_plate),
-    }));
-  
-    res.json({ users: usersWithVehicles });
-  });
+// Admin Endpoints
+app.get('/spots', authenticateAdmin, async (req, res) => {
+  const { data: spots, error } = await supabase.from('parking_spots').select('*');
+  if (error) {
+    console.log('Spots error:', error);
+    return res.status(400).json({ error: error.message });
+  }
+  res.json({ spots });
+});
+
+app.get('/vehicles', authenticateAdmin, async (req, res) => {
+  const { data: vehicles, error } = await supabase
+    .from('vehicles')
+    .select('number_plate, entry_time, spot_id')
+    .is('exit_time', null);
+  if (error) {
+    console.log('Vehicles error:', error);
+    return res.status(400).json({ error: error.message });
+  }
+  res.json({ vehicles });
+});
+
+app.get('/users', authenticateAdmin, async (req, res) => {
+  const { data: users, error: userError } = await supabase
+    .from('users')
+    .select('id, email, name');
+  if (userError) {
+    console.log('Users error:', userError);
+    return res.status(400).json({ error: userError.message });
+  }
+
+  const { data: userVehicles, error: uvError } = await supabase
+    .from('user_vehicles')
+    .select('user_id, number_plate');
+  if (uvError) {
+    console.log('User vehicles error:', uvError);
+    return res.status(400).json({ error: uvError.message });
+  }
+
+  const usersWithVehicles = users.map(user => ({
+    ...user,
+    vehicles: userVehicles.filter(uv => uv.user_id === user.id).map(uv => uv.number_plate),
+  }));
+
+  res.json({ users: usersWithVehicles });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
