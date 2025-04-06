@@ -77,54 +77,42 @@ app.post('/login', async (req, res) => {
 
 // Vehicle Entry
 app.post('/entry', async (req, res) => {
-  const { imageUrl, userId, numberPlate, spotId } = req.body;
-  console.log('Entry request:', { imageUrl, userId, numberPlate, spotId });
-
-  let finalNumberPlate = numberPlate;
-  if (!finalNumberPlate && imageUrl) {
-    const { data } = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-    const { data: { text } } = await Tesseract.recognize(Buffer.from(data), 'eng');
-    finalNumberPlate = text.trim().replace(/^["“']+|["“']+$/g, '');
-  }
-
-  if (!finalNumberPlate) return res.status(400).json({ error: 'Number plate required' });
-
-  const { data: spot, error: spotError } = await supabase
-    .from('parking_spots')
-    .select('id, status')
-    .eq('id', spotId || null)
-    .eq('status', 'available')
-    .single();
-  if (spotError || !spot) {
-    const { data: availableSpot, error: availableError } = await supabase
+    const { imageUrl, userId, numberPlate, spotId } = req.body;
+    let finalNumberPlate = numberPlate;
+  
+    if (!finalNumberPlate && imageUrl) {
+      const { data } = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+      const { data: { text } } = await Tesseract.recognize(Buffer.from(data), 'eng');
+      finalNumberPlate = text.trim().replace(/^["“']+|["“']+$/g, '');
+    }
+  
+    if (!finalNumberPlate) return res.status(400).json({ error: 'Number plate required' });
+  
+    const { data: spot, error: spotError } = await supabase
       .from('parking_spots')
-      .select('*')
+      .select('id, status')
+      .eq('id', spotId || null)
       .eq('status', 'available')
-      .limit(1)
       .single();
-    if (availableError || !availableSpot) return res.status(400).json({ error: 'No available spot' });
-    spot = availableSpot;
-  }
-
-  const vehicleData = {
-    number_plate: finalNumberPlate,
-    entry_time: new Date(),
-    spot_id: spot.id,
-    user_id: userId || null,
-  };
-  if (imageUrl) vehicleData.image_url = imageUrl;
-
-  const { error } = await supabase.from('vehicles').insert([vehicleData]);
-  if (error) return res.status(400).json({ error: error.message });
-
-  await supabase
-    .from('parking_spots')
-    .update({ status: 'occupied' })
-    .eq('id', spot.id);
-
-  res.json({ message: 'Vehicle entered', numberPlate: finalNumberPlate, spotId: spot.id });
-});
-
+    if (spotError || !spot) return res.status(400).json({ error: 'No available spot' });
+  
+    const { error } = await supabase
+      .from('vehicles')
+      .insert({
+        number_plate: finalNumberPlate,
+        entry_time: new Date(),
+        spot_id: spot.id,
+        user_id: userId || null,
+      });
+    if (error) return res.status(400).json({ error: error.message });
+  
+    await supabase
+      .from('parking_spots')
+      .update({ status: 'occupied' })
+      .eq('id', spot.id);
+  
+    res.json({ message: 'Vehicle entered', numberPlate: finalNumberPlate, spotId: spot.id });
+  });
 // Vehicle Registration
 app.post('/register-vehicle', async (req, res) => {
   const { userId, numberPlate } = req.body;
