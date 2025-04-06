@@ -222,78 +222,78 @@ app.get('/my-parkings', async (req, res) => {
   
     res.json({ parkings: formattedParkings });
   });
-  
+
   //vehicle exit
 
   app.post('/exit', async (req, res) => {
-    const { numberPlate } = req.body;
-    console.log('Exit request:', { numberPlate });
-  
-    if (!numberPlate) {
-      return res.status(400).json({ error: 'numberPlate is required' });
-    }
-  
-    const { data: vehicle, error: vehicleError } = await supabase
-      .from('vehicles')
-      .select('id, entry_time, spot_id')
-      .eq('number_plate', numberPlate)
-      .is('exit_time', null)
-      .single();
-    if (vehicleError || !vehicle) {
-      console.log('Vehicle error:', vehicleError);
-      return res.status(400).json({ error: 'Vehicle not found or already exited' });
-    }
-  
-    const entryTime = new Date(vehicle.entry_time);
-    const exitTime = new Date();
-    const durationMs = exitTime - entryTime;
-    const durationHours = Math.round(durationMs / (1000 * 60 * 60) * 10) / 10;
-  
-    const ratePerHour = 10; // ₹10/hour
-    const amount = Math.ceil(durationHours * ratePerHour * 100); // In paise
-  
-    const { error: updateError } = await supabase
-      .from('vehicles')
-      .update({ exit_time: exitTime })
-      .eq('id', vehicle.id);
-    if (updateError) {
-      console.log('Update error:', updateError);
-      return res.status(400).json({ error: updateError.message });
-    }
-  
-    await supabase
-      .from('parking_spots')
-      .update({ status: 'available' })
-      .eq('id', vehicle.spot_id);
-  
-    // Shorten receipt to fit 40-character limit
-    const shortVehicleId = vehicle.id.split('-')[0]; // First UUID segment (8 chars)
-    const receipt = `exit_${shortVehicleId}`; // e.g., "exit_123e4567" (13 chars)
-  
-    try {
-      const order = await razorpay.orders.create({
-        amount, // In paise
+  const { numberPlate } = req.body;
+  console.log('Exit request:', { numberPlate });
+
+  if (!numberPlate) {
+    return res.status(400).json({ error: 'numberPlate is required' });
+  }
+
+  const { data: vehicle, error: vehicleError } = await supabase
+    .from('vehicles')
+    .select('id, entry_time, spot_id')
+    .eq('number_plate', numberPlate)
+    .is('exit_time', null)
+    .single();
+  if (vehicleError || !vehicle) {
+    console.log('Vehicle error:', vehicleError);
+    return res.status(400).json({ error: 'Vehicle not found or already exited' });
+  }
+
+  const entryTime = new Date(vehicle.entry_time);
+  const exitTime = new Date();
+  const durationMs = exitTime - entryTime;
+  const durationHours = Math.round(durationMs / (1000 * 60 * 60) * 10) / 10;
+
+  const ratePerHour = 10; // ₹10/hour
+  const calculatedAmount = Math.ceil(durationHours * ratePerHour * 100); // In paise
+  const amount = Math.max(calculatedAmount, 1000); // Minimum ₹10 (1000 paise)
+
+  const { error: updateError } = await supabase
+    .from('vehicles')
+    .update({ exit_time: exitTime })
+    .eq('id', vehicle.id);
+  if (updateError) {
+    console.log('Update error:', updateError);
+    return res.status(400).json({ error: updateError.message });
+  }
+
+  await supabase
+    .from('parking_spots')
+    .update({ status: 'available' })
+    .eq('id', vehicle.spot_id);
+
+  const shortVehicleId = vehicle.id.split('-')[0];
+  const receipt = `exit_${shortVehicleId}`;
+
+  try {
+    const order = await razorpay.orders.create({
+      amount, // In paise, minimum 1000
+      currency: 'INR',
+      receipt,
+    });
+
+    res.json({
+      numberPlate,
+      entryTime,
+      exitTime,
+      durationHours,
+      spotId: vehicle.spot_id,
+      payment: {
+        orderId: order.id,
+        amount: amount / 100, // Convert back to INR
         currency: 'INR',
-        receipt,
-      });
-  
-      res.json({
-        numberPlate,
-        entryTime,
-        exitTime,
-        durationHours,
-        spotId: vehicle.spot_id,
-        payment: {
-          orderId: order.id,
-          amount: amount / 100, // Convert back to INR
-          currency: 'INR',
-        },
-      });
-    } catch (err) {
-      console.log('Razorpay error:', err);
-      return res.status(500).json({ error: 'Failed to create payment order: ' + err.message });
-    }
-  });
+      },
+    });
+  } catch (err) {
+    console.log('Razorpay error:', err);
+    return res.status(500).json({ error: 'Failed to create payment order: ' + err.message });
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
