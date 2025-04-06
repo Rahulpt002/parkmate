@@ -295,5 +295,56 @@ app.get('/my-parkings', async (req, res) => {
   }
 });
 
+// Get all parking spots
+app.get('/spots', async (req, res) => {
+    const { data: spots, error } = await supabase.from('parking_spots').select('*');
+    if (error) {
+      console.log('Spots error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+    res.json({ spots });
+  });
+  
+  // Get all current vehicles (not exited)
+  app.get('/vehicles', async (req, res) => {
+    const { data: vehicles, error } = await supabase
+      .from('vehicles')
+      .select('number_plate, entry_time, spot_id')
+      .is('exit_time', null);
+    if (error) {
+      console.log('Vehicles error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+    res.json({ vehicles });
+  });
+  
+  // Get all users with their vehicles
+  app.get('/users', async (req, res) => {
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('id, email, name');
+    if (userError) {
+      console.log('Users error:', userError);
+      return res.status(400).json({ error: userError.message });
+    }
+  
+    const { data: userVehicles, error: uvError } = await supabase
+      .from('user_vehicles')
+      .select('user_id, number_plate');
+    if (uvError) {
+      console.log('User vehicles error:', uvError);
+      return res.status(400).json({ error: uvError.message });
+    }
+  
+    const usersWithVehicles = users.map(user => ({
+      ...user,
+      vehicles: userVehicles
+        .filter(uv => uv.user_id === user.id)
+        .map(uv => uv.number_plate),
+    }));
+  
+    res.json({ users: usersWithVehicles });
+  });
+  
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
